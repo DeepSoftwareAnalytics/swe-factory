@@ -339,6 +339,13 @@ def build_container(client,test_image_name,test_container_name,instance_id,run_t
                 command="tail -f /dev/null",
                 nano_cpus=None,
                 platform="linux/x86_64",
+                log_config={
+                    "Type": "json-file",
+                    "Config": {
+                        "max-size": "10m",
+                        "max-file": "3"
+                    }
+                }
             )
 
            

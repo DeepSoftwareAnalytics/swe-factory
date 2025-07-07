@@ -5,6 +5,12 @@ Values of global configuration variables.
 # Overall output directory for results
 output_dir: str = ""
 
+# Setup directory for repositories
+setup_dir: str = ""
+
+# Results path for storing results
+results_path: str | None = None
+
 # upper bound of the number of conversation rounds for the agent
 conv_round_limit: int = 15
 
@@ -47,3 +53,11 @@ disable_memory_pool: bool = False
 disable_context_retrieval: bool = False
 
 disable_run_test: bool = False
+
+# whether to only organize output without running tasks
+organize_output_only: bool = False
+
+import os
+
+if results_path is None:
+    results_path = os.path.join(output_dir, "results")

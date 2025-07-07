@@ -127,7 +127,7 @@ tree-sitter-c==0.21.4
 tree-sitter-cpp==0.22.2
 tree-sitter-java==0.21.0
 tree-sitter-languages==1.10.2
-triton==2.2.0
+# triton==2.2.0
 types-jsonschema==4.21.0.20240311
 typing_extensions
 tzdata==2025.2

@@ -49,7 +49,7 @@ class AgentsManager:
                 client: docker.DockerClient, 
                 start_time: datetime, 
                 max_iteration_num: int,
-                results_path:str,
+                results_path: str | None,
                 disable_memory_pool:bool,
                 disable_context_retrieval:bool,
                 disable_run_test:bool,
@@ -79,7 +79,19 @@ class AgentsManager:
             self.set_agent_status("context_retrieval_agent",True)
         self.agents_dict['test_analysis_agent'].disable_context_retrieval= disable_context_retrieval
         self.agents_dict['test_analysis_agent'].disable_run_test = disable_run_test
-        self.results_file = f'{results_path}/results.json'
+        
+        # Handle None results_path by setting a default
+        if results_path is None:
+            results_path = os.path.join(output_dir, "results")
+        
+        # Ensure results_path is absolute
+        if not os.path.isabs(results_path):
+            results_path = os.path.abspath(results_path)
+        
+        # Create the results directory if it doesn't exist
+        os.makedirs(results_path, exist_ok=True)
+        
+        self.results_file = os.path.join(results_path, 'results.json')
         lock_path = self.results_file + '.lock'
         self.lock = FileLock(lock_path, timeout=30)
         with self.lock:
@@ -263,15 +275,21 @@ class AgentsManager:
         eval_script_content = self.agents_dict['write_eval_script_agent'].get_latest_eval_script()
         eval_script_skeleton_content = self.agents_dict['write_eval_script_agent'].get_latest_eval_script_skeleton()
         if dockerfile_content and eval_script_content:
-            with open(os.path.join(self.output_dir, "Dockerfile"), "w") as dockerfile_f:
+            dockerfile_path = os.path.join(self.output_dir, "Dockerfile")
+            logger.info(f"Writing Dockerfile to: {dockerfile_path}")
+            with open(dockerfile_path, "w") as dockerfile_f:
                 dockerfile_f.write(dockerfile_content)
 
         
-            with open(os.path.join(self.output_dir, "eval.sh"), "w") as eval_script_f:
+            eval_script_path = os.path.join(self.output_dir, "eval.sh")
+            logger.info(f"Writing eval.sh to: {eval_script_path}")
+            with open(eval_script_path, "w") as eval_script_f:
                 eval_script_f.write(eval_script_content)
 
 
-        with open(os.path.join(self.output_dir, "status.json"), "w") as status_file_f:
+        status_file_path = os.path.join(self.output_dir, "status.json")
+        logger.info(f"Writing status.json to: {status_file_path}")
+        with open(status_file_path, "w") as status_file_f:
                 json.dump({"is_finish": self.workflow_finish_status}, status_file_f)
 
         if self.workflow_finish_status:

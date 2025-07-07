@@ -107,10 +107,23 @@ class PlainTask(Task):
     commit_hash: str
     local_path: str
     problem_statement: str
+    patch: str = ""
+    test_patch: str = ""
+    repo_name: str = ""
+    version: str = ""
+    task_id: str = ""
+
+    @property
+    def commit(self) -> str:
+        return self.commit_hash
 
     @property
     def project_path(self) -> str:
         return self.local_path
+
+    @project_path.setter
+    def project_path(self, value: str) -> None:
+        self.local_path = value
 
     def setup_project(self) -> None:
         with apputils.cd(self.project_path):

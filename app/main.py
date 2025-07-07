@@ -77,12 +77,17 @@ def main(args, subparser_dest_attr_name: str = "command"):
     globals.output_dir = args.output_dir
     if globals.output_dir is not None:
         globals.output_dir = abspath(globals.output_dir)
+    else:
+        # Set a default output directory if none is provided
+        globals.output_dir = abspath("output/swe-factory-runs/default")
     num_processes: int = int(args.num_processes)
     # set whether brief or verbose log
     print_stdout: bool = not args.no_print
     log.print_stdout = print_stdout
     # model related
     common.set_model(args.model)
+    # Set environment variable for subprocesses (keep original model name for OpenAI-compatible endpoints)
+    os.environ["SWE_FACTORY_MODEL"] = args.model
     # FIXME: make temperature part of the Model class
     common.MODEL_TEMP = args.model_temperature
     # FIXME: we will remove these hyperparamters, which are from AutoCodeRover, thanks to this work.
@@ -98,9 +103,18 @@ def main(args, subparser_dest_attr_name: str = "command"):
 
     globals.context_generation_limit = args.output_fix_limit
     globals.setup_dir = args.setup_dir 
+    if globals.setup_dir is not None:
+        globals.setup_dir = abspath(globals.setup_dir)
+    else:
+        # Set a default setup directory if none is provided
+        globals.setup_dir = abspath("output/swe-factory-runs/testbed")
     
     globals.organize_output_only = args.organize_output_only
-    globals.results_path = args.results_path 
+    # Set a default results_path if none is provided
+    if args.results_path is None:
+        globals.results_path = None  # Let AgentsManager handle the default
+    else:
+        globals.results_path = args.results_path
     globals.disable_memory_pool = args.disable_memory_pool
     globals.disable_run_test = args.disable_run_test
     
@@ -225,6 +239,17 @@ def set_local_parser_args(parser: ArgumentParser) -> None:
         "--local-repo", type=str, help="Path to a local copy of the target repo."
     )
     parser.add_argument("--issue-file", type=str, help="Path to a local issue file.")
+    parser.add_argument(
+        "--setup-dir",
+        type=str,
+        help="The directory where repositories should be cloned to.",
+    )
+    parser.add_argument(
+        "--results-path",
+        type=str,
+        default=None,
+        help="The directory where results should be saved.",
+    )
 
 
 def add_task_related_args(parser: ArgumentParser) -> None:
@@ -246,6 +271,9 @@ def add_task_related_args(parser: ArgumentParser) -> None:
         if name in common.MODEL_HUB.keys():
             return name
         if name.startswith("litellm-generic-"):
+            return name
+        # Allow direct model names (like google/gemini-2.5-flash) that contain "/"
+        if "/" in name:
             return name
         raise TypeError(f"Invalid model name: {name}")
 
@@ -429,7 +457,7 @@ def make_swe_tasks(
         setup_info = {}
         task_info = tasks_map[task_id]
         task_start_time_s = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        repo_cache_name = f'{task_info['repo']}_cache'
+        repo_cache_name = f"{task_info['repo']}_cache"
         repo_cache_dir =  pjoin(setup_dir,repo_cache_name)
         if not os.path.isdir(repo_cache_dir):
             github_link = f"https://github.com/{task_info['repo']}.git"
@@ -632,11 +660,24 @@ def run_raw_task(
     Returns:
         Whether the task completed successfully.
     """
+    # Set the model in the subprocess to ensure SELECTED_MODEL is available
+    # We need to get the model name from the current process environment or use a default
+    model_name = os.getenv("SWE_FACTORY_MODEL", "gpt-3.5-turbo-0125")
+    common.set_model(model_name)
+    
     task_id = task.task_id
 
     start_time_s = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     # task_output_dir = pjoin(globals.output_dir, f"{task_id}_{start_time_s}")
+    
+    # Ensure globals.output_dir is set
+    if not globals.output_dir:
+        globals.output_dir = abspath("output/swe-factory-runs/default")
+    
     task_output_dir = pjoin(globals.output_dir, f"{task_id}")
+    
+    # Ensure task_output_dir is absolute
+    task_output_dir = os.path.abspath(task_output_dir)
     
     status_file = pjoin(task_output_dir, "status.json")
     if os.path.exists(status_file):
@@ -679,10 +720,34 @@ def do_inference(
     print_callback: Callable[[dict], None] | None = None,
 ) -> bool:
     client = docker.from_env()
+    
+    # Ensure task_output_dir is absolute
+    task_output_dir = os.path.abspath(task_output_dir)
+    
     apputils.create_dir_if_not_exists(task_output_dir)
     # github_link = f'https://github.com/{python_task.repo_name}.git'
-    commit_hash = python_task.commit
-    apputils.clone_repo_and_checkout(python_task.repo_cache_path,commit_hash,python_task.project_path)
+    # Handle both SweTask and PlainTask
+    if hasattr(python_task, 'commit'):
+        commit_hash = python_task.commit
+    elif hasattr(python_task, 'commit_hash'):
+        commit_hash = python_task.commit_hash
+    else:
+        raise AttributeError(f"Task object {type(python_task)} has no commit or commit_hash attribute")
+    
+    # For PlainTask, create a working directory in the testbed
+    if hasattr(python_task, 'repo_cache_path'):
+        repo_cache_path = python_task.repo_cache_path
+    else:
+        # Ensure globals.setup_dir is set
+        if not globals.setup_dir:
+            globals.setup_dir = abspath("output/swe-factory-runs/testbed")
+        
+        # Create a working directory in the testbed to avoid deleting the original repo
+        working_dir = pjoin(globals.setup_dir, f"{python_task.project_path.split('/')[-1]}_working")
+        repo_cache_path = python_task.project_path
+        python_task.project_path = working_dir
+    
+    apputils.clone_repo_and_checkout(repo_cache_path, commit_hash, python_task.project_path)
     logger.add(
         pjoin(task_output_dir, "info.log"),
         level="DEBUG",
@@ -713,7 +778,7 @@ def do_inference(
         dump_cost(start_time, end_time, task_output_dir, python_task.project_path)
     finally:
         # python_task.reset_project()
-        python_task.remove_project()
+        # python_task.remove_project()  # Commented out to prevent deleting original repository
         if client:
             client.close()
 
@@ -723,6 +788,9 @@ def do_inference(
 def dump_cost(
     start_time: datetime, end_time: datetime, task_output_dir: str, project_path: str
 ):
+    # Ensure task_output_dir is absolute
+    task_output_dir = os.path.abspath(task_output_dir)
+    
     with apputils.cd(project_path):
         commit_hash = apputils.get_current_commit_hash()
     model_stats = common.SELECTED_MODEL.get_overall_exec_stats()

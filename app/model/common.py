@@ -5,8 +5,8 @@ from abc import ABC, abstractmethod
 from typing import Literal
 
 import litellm
-from litellm import cost_per_token
-from litellm.utils import Choices, Message, ModelResponse
+from litellm.cost_calculator import cost_per_token
+from litellm.types.utils import Choices, Message, ModelResponse
 from openai import BadRequestError
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
@@ -131,26 +131,48 @@ class LiteLLMGeneric(Model):
     ):
         # FIXME: ignore tools field since we don't use tools now
         try:
+            # Enable verbose logging for debugging - os is already imported at the top of the file
+                
             prefill_content = "{"
             if response_format == "json_object":  # prefill
                 messages.append({"role": "assistant", "content": prefill_content})
 
+            max_tokens_val = os.getenv("ACR_TOKEN_LIMIT", "1024")
+            max_tokens_int = int(max_tokens_val) if max_tokens_val else 1024
+            
+            # Check if we need to use a custom API base
+            api_base = os.getenv("LITELLM_API_BASE", None)
+            extra_kwargs = {}
+            if api_base:
+                print(f"Using custom API base: {api_base}")
+                print(f"Model name: {self.name}")
+                extra_kwargs["api_base"] = api_base
+                # Force OpenAI provider when using custom endpoint
+                extra_kwargs["custom_llm_provider"] = "openai"
+                # Set additional headers if needed
+                extra_kwargs["headers"] = {"Content-Type": "application/json"}
+            
             response = litellm.completion(
                 model=self.name,
                 messages=messages,
                 temperature=MODEL_TEMP,
-                max_tokens=os.getenv("ACR_TOKEN_LIMIT", 1024),
+                max_tokens=max_tokens_int,
                 response_format=(
                     {"type": response_format} if "gpt" in self.name else None
                 ),
                 top_p=top_p,
                 stream=False,
+                **extra_kwargs
             )
             assert isinstance(response, ModelResponse)
-            resp_usage = response.usage
-            assert resp_usage is not None
-            input_tokens = int(resp_usage.prompt_tokens)
-            output_tokens = int(resp_usage.completion_tokens)
+            resp_usage = getattr(response, 'usage', None)
+            if resp_usage is None:
+                # Fallback if usage is not available
+                input_tokens = 0
+                output_tokens = 0
+            else:
+                input_tokens = int(resp_usage.prompt_tokens)
+                output_tokens = int(resp_usage.completion_tokens)
             cost = self.calc_cost(input_tokens, output_tokens)
 
             thread_cost.process_cost += cost
@@ -193,9 +215,37 @@ SELECTED_MODEL: Model
 def set_model(model_name: str):
     global SELECTED_MODEL
     if model_name not in MODEL_HUB and not model_name.startswith("litellm-generic-"):
-        print(f"Invalid model name: {model_name}")
-        sys.exit(1)
-    if model_name.startswith("litellm-generic-"):
+        # Handle direct model names (like google/gemini-2.5-flash) as OpenAI-compatible models
+        if "/" in model_name:  # This looks like a direct model name
+            # Don't transform the model name - use it as-is for OpenAI-compatible endpoints
+            real_model_name = model_name
+            print(f"Using {model_name} as OpenAI-compatible model with custom endpoint")
+                
+            prompt_tokens = 5
+            completion_tokens = 10
+            try:
+                prompt_tokens_cost_usd_dollar, completion_tokens_cost_usd_dollar = (
+                    cost_per_token(
+                        model=real_model_name,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                )
+            except Exception as e:
+                # If cost calculation fails, use default values
+                print(f"Warning: Could not calculate costs for {model_name}, using defaults")
+                prompt_tokens_cost_usd_dollar = 0.00000015  # Default cost
+                completion_tokens_cost_usd_dollar = 0.0000006  # Default cost
+            
+            SELECTED_MODEL = LiteLLMGeneric(
+                real_model_name,
+                prompt_tokens_cost_usd_dollar,
+                completion_tokens_cost_usd_dollar,
+            )
+        else:
+            print(f"Invalid model name: {model_name}")
+            sys.exit(1)
+    elif model_name.startswith("litellm-generic-"):
         real_model_name = model_name.removeprefix("litellm-generic-")
         prompt_tokens = 5
         completion_tokens = 10

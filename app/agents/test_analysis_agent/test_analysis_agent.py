@@ -24,8 +24,25 @@ from app.log import (
 import json
 from os.path import join as pjoin
 import traceback
+from typing import Optional
+
 MAX_LINE_NUM = 600
 ansi_escape = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+def sanitize_docker_image_name(name: str) -> str:
+    if not name or not str(name).strip():
+        return "swe-task"
+    sanitized = re.sub(r'[^a-z0-9_-]', '-', str(name).lower().strip())
+    if sanitized.startswith('-'):
+        sanitized = 'swe' + sanitized
+    # Remove trailing hyphens/underscores, then leading underscores
+    sanitized = sanitized.rstrip('-').rstrip('_').lstrip('_')
+    if not sanitized or sanitized == "swe":
+        return "swe-task"
+    if len(sanitized) > 50:
+        sanitized = sanitized[:50]
+    return sanitized
+
 class TestAnalysisAgent(Agent):
     """
     Agent responsible for:
@@ -44,7 +61,9 @@ class TestAnalysisAgent(Agent):
         self.run_test_num = 0
         self.setup_dockerfile_num = 0
         self.repo_basic_info = repo_basic_info
-        self.task_id = task.task_id.lower()
+        # Sanitize task_id to ensure valid Docker image names
+        raw_task_id = getattr(task, 'task_id', '') or ''
+        self.task_id = sanitize_docker_image_name(raw_task_id)
         self.client = client
         self.test_analysis_dir = os.path.join(self.output_dir, "test_analysis_agent") 
         # self.build_image_dir = os.path.join(self.output_dir, "build_image") 
@@ -102,7 +121,7 @@ class TestAnalysisAgent(Agent):
         full_formatted = [f"{i + 1:>{width}}   {line}" for i, line in enumerate(lines)]
         
         if len(full_formatted) <= MAX_LINE_NUM:
-            return f'Test log:\n{"\n".join(full_formatted)}\n\n'
+            return f'Test log:\n{chr(10).join(full_formatted)}\n\n'
         
         head_size = MAX_LINE_NUM // 2
         tail_size = MAX_LINE_NUM - head_size
@@ -114,7 +133,7 @@ class TestAnalysisAgent(Agent):
         omission = " " * width + "   [..., {} lines omitted ...]".format(
             len(full_formatted) - head_size - tail_size)
         
-        truncated_log = "\n".join(head + [omission] + tail)
+        truncated_log = chr(10).join(head + [omission] + tail)
         
         return f'Test log (showing first {head_size} & last {tail_size} lines):\n{truncated_log}\n\n'
 
@@ -298,6 +317,7 @@ class TestAnalysisAgent(Agent):
         
 
         dockerfile_path = f'{cur_build_image_dir}/Dockerfile'
+        logger.info(f"Writing Dockerfile to: {dockerfile_path}")
         with open(dockerfile_path, "w") as f:
             f.write(dockerfile)
 
@@ -373,7 +393,7 @@ class TestAnalysisAgent(Agent):
         cur_build_image_dir = self.get_latest_test_analysis_output_dir()
         os.makedirs(cur_build_image_dir, exist_ok=True)
         build_image_logger = setup_logger(self.task_id, Path(f'{cur_build_image_dir}/build_image.log'))
-        # image_name = f"{self.task_id}:latest_{self.setup_dockerfile_num}"
+        # Generate a valid Docker image name
         image_name = f"{self.task_id}-dockerfile{self.setup_dockerfile_num}:latest"
        
         try:
@@ -429,9 +449,8 @@ class TestAnalysisAgent(Agent):
         cur_test_dir = self.get_latest_test_analysis_output_dir()
         os.makedirs(cur_test_dir, exist_ok=True)
         run_test_logger = setup_logger(self.task_id, Path(f'{cur_test_dir}/run_test.log'))
-        # test_image_name = f"{self.task_id}:latest_{self.setup_dockerfile_num}"
+        # Use sanitized image names to ensure valid Docker tags
         test_image_name = f"{self.task_id}-dockerfile{self.setup_dockerfile_num}:latest"
-        # test_container_name =  f"{self.task_id}:test_{self.run_test_num}"
         test_container_name = f"{self.task_id}-test{self.run_test_num}"
         instance_id = self.task_id
         container = None
@@ -487,9 +506,10 @@ class TestAnalysisAgent(Agent):
             run_test_logger.info(f"Git diff before:\n{git_diff_output_before}")
 
             eval_file = Path(f"{self.get_latest_test_analysis_output_dir()}/eval.sh")
+            logger.info(f"Writing eval.sh to: {eval_file}")
             eval_file.write_text(eval_script)
             run_test_logger.info(
-                f"Eval script for {instance_id} written to {patch_file}, now applying to container..."
+                f"Eval script for {instance_id} written to {eval_file}, now applying to container..."
             )
             copy_to_container(container, eval_file, Path("/eval.sh"))
 

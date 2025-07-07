@@ -603,6 +603,13 @@ def build_container(
             command="tail -f /dev/null",
             nano_cpus=nano_cpus,
             platform=test_spec.platform,
+            log_config={
+                "Type": "json-file",
+                "Config": {
+                    "max-size": "10m",
+                    "max-file": "3"
+                }
+            }
         )
 
         logger.info(f"Container for {test_spec.instance_id} created: {container.id}")
@@ -659,6 +666,13 @@ def build_setup_container(
             command="tail -f /dev/null",
             # nano_cpus=nano_cpus,
             platform=test_spec.platform,
+            log_config={
+                "Type": "json-file",
+                "Config": {
+                    "max-size": "10m",
+                    "max-file": "3"
+                }
+            }
         )
 
         logger.info(f"Container for {test_spec.instance_id} created: {container.id}")
