@@ -236,6 +236,63 @@ History-only files:
 | `--backend` | Runtime backend | `docker` |
 | `--scaffold` | Agent scaffold | `mini_swe_agent` / `r2egym` / `live_swe_agent` / `openhands` |
 
+## Harbor / Terminal-Bench Agents
+
+Besides the built-in `agenthub` scaffolds above, you can also evaluate
+Terminal-Bench style agents with Harbor on SWE-Factory environments.
+
+### Install
+
+```bash
+pip install harbor
+```
+
+### Workflow
+
+Harbor does not read the SWE-Factory dataset directly. First convert your
+transferred dataset into Harbor task format, then run Harbor on the converted
+task directory.
+
+### Convert SWE-Factory Data to Harbor Format
+
+```bash
+python inference/build_image/convert_to_harbor_format.py \
+  --input /path/to/TRANSFERRED_DATASET.json \
+  --out-dir ./harbor
+```
+
+This generates a Harbor-compatible task directory like:
+
+```text
+./harbor/
+  <task_id>/
+    instruction.md
+    task.toml
+    environment/Dockerfile
+    tests/test.sh
+    tests/eval.sh
+    solution/solve.sh
+```
+
+### Run Harbor
+
+```bash
+export OPENROUTER_API_KEY="YOUR_OPENROUTER_KEY"
+
+harbor run \
+  -p "$(pwd)/harbor" \
+  -a terminus-2 \
+  -m "openrouter/stepfun/step-3.5-flash" \
+  -n 4 \
+  -l 10
+```
+
+Notes:
+- Harbor support is a separate evaluation path from `agenthub`; it is mainly for
+  running Terminal-Bench compatible agents.
+- Conversion is required before running Harbor.
+- Harbor consumes the same Stage 1 transferred dataset format used by Stage 2.
+
 ## Acknowledgements
 
 The inference/agenthub module is developed on top of R2E-Gym. Thanks to the
