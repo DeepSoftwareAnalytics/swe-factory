@@ -349,6 +349,7 @@ def run_agent_with_restarts(
     trajectory = min(trajectories, key=lambda x: x.num_steps)
     return trajectory, history
 
+
 def runagent(
     ds,
     exp_name: Optional[str] = None,
@@ -419,50 +420,61 @@ def runagent(
     # Initialize the agent
     agent = Agent(name="EditAgent", args=agent_args, logger=logger)
 
-    # run agent editagent
     try:
-        trajectory,history = run_agent_with_restarts(
-            agent,
-            env,
-            max_steps=max_steps,
-            num_restarts=num_restarts,
-            temperature=temperature,
-            max_steps_absolute=max_steps_absolute,
-            use_fn_calling=use_fn_calling,
-            max_iterations=max_iterations,
-            scaffold=scaffold,
-            max_tokens=max_tokens,
-        )
-    except Exception as e:
-        logger.error(
-            f"Error during agent run for Docker image {ds['docker_image']}: {e}"
-        )
-        return None
+        # run agent editagent
+        try:
+            trajectory,history = run_agent_with_restarts(
+                agent,
+                env,
+                max_steps=max_steps,
+                num_restarts=num_restarts,
+                temperature=temperature,
+                max_steps_absolute=max_steps_absolute,
+                use_fn_calling=use_fn_calling,
+                max_iterations=max_iterations,
+                scaffold=scaffold,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during agent run for Docker image {ds['docker_image']}: {e}"
+            )
+            return None
 
-    # also get the gt outputs
-    reward_calc_time = time.time()
-    reward, test_output = env.runtime._calculate_reward(get_test_output=True, timeout=max_reward_calc_time)
-    reward_calc_time = time.time() - reward_calc_time
-    # Close the environment and runtime
-    env.close()
+        # also get the gt outputs
+        reward_calc_time = time.time()
+        try:
+            reward, test_output = env.runtime._calculate_reward(get_test_output=True, timeout=max_reward_calc_time)
+        except Exception as e:
+            logger.error(
+                f"Error calculating reward for Docker image {ds['docker_image']}: {e}"
+            )
+            return None
+        reward_calc_time = time.time() - reward_calc_time
 
-    # update the trajectory object
-    trajectory.reward = reward
-    trajectory.test_output = test_output
-    trajectory.ds = ds
-    trajectory.exp_name = exp_name
-    trajectory.reward_calc_time = reward_calc_time # time taken to calculate reward
-    trajectory.history = history
-    
-    logger.warning(f"time taken to calculate reward in seconds: {reward_calc_time:.2f}")
+        # update the trajectory object
+        trajectory.reward = reward
+        trajectory.test_output = test_output
+        trajectory.ds = ds
+        trajectory.exp_name = exp_name
+        trajectory.reward_calc_time = reward_calc_time # time taken to calculate reward
+        trajectory.history = history
+        
+        logger.warning(f"time taken to calculate reward in seconds: {reward_calc_time:.2f}")
 
-    write_instance_artifacts(instance_dir, trajectory, instance_meta, logger)
+        write_instance_artifacts(instance_dir, trajectory, instance_meta, logger)
 
-    logger.info(f"editagent completed for Docker image: {ds['docker_image']}")
-    # close env and docker runtime
-    logger.info(f"Closing environment for Docker image: {ds['docker_image']}")
-    return trajectory.model_dump_json()
-
+        logger.info(f"editagent completed for Docker image: {ds['docker_image']}")
+        return trajectory.model_dump_json()
+    finally:
+        # close env and docker runtime
+        logger.info(f"Closing environment for Docker image: {ds['docker_image']}")
+        try:
+            env.close()
+        except Exception as e:
+            logger.error(
+                f"Error closing environment for Docker image {ds['docker_image']}: {e}"
+            )
 
 def runagent_multiple(
     dataset: str,
